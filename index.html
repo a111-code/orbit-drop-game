@@ -1,17 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-THMKFHK7NB"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-THMKFHK7NB');
-</script>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Orbit Drop</title>
     <style>
         * { box-sizing: border-box; }
@@ -22,6 +13,7 @@
             justify-content: center; 
             align-items: center; 
             height: 100vh; 
+            height: -webkit-fill-available; /* Risolve il problema della barra di Safari su iPhone */
             overflow: hidden; 
             font-family: 'Segoe UI', Arial, sans-serif; 
             padding: 10px;
@@ -29,16 +21,19 @@
         canvas { 
             background: #06060e; 
             box-shadow: 0 0 30px rgba(0,255,255,0.15); 
-            max-width: 100%; 
-            max-height: 100%; 
+            /* Rende il canvas fluido mantenendo le proporzioni corrette senza schiacciare */
+            width: 100%;
+            height: auto;
+            max-width: 800px;  
+            max-height: 100%;
+            object-fit: contain;
             border-radius: 12px;
-            aspect-ratio: 800 / 600;
         }
     </style>
 </head>
 <body>
 
-<canvas id="gameCanvas" width="800" height="600"></canvas>
+<canvas id="gameCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -46,12 +41,16 @@ const ctx = canvas.getContext("2d");
 
 const WIDTH = 800;
 const HEIGHT = 600;
+
 function setupCanvas() {
     const dpr = window.devicePixelRatio || 1;
-    canvas.style.width = WIDTH + "px";
-    canvas.style.height = HEIGHT + "px";
+    // Imposta la dimensione logica interna del gioco moltiplicata per il retina display
     canvas.width = WIDTH * dpr;
     canvas.height = HEIGHT * dpr;
+    
+    // Gestisce la proporzione via CSS in modo fluido
+    canvas.style.aspectRatio = `${WIDTH} / ${HEIGHT}`;
+    
     ctx.scale(dpr, dpr);
 }
 setupCanvas();
@@ -74,7 +73,7 @@ let displayPerfectTime = 0;
 
 let targetType = "NORMAL";  
 let activePowerUp = "NONE"; 
-let powerUpTimer = 0;      
+let powerUpTimer = 0;       
 let ballBounced = false;    
 
 // --- UI BUTTONS ---
@@ -216,6 +215,7 @@ function handleInput(clientX, clientY) {
     if (audioCtx.state === 'suspended') audioCtx.resume();
 
     const rect = canvas.getBoundingClientRect();
+    // Questo calcolo converte correttamente il tocco sul display mobile nelle coordinate 800x600 interne del gioco
     const canvasX = (clientX - rect.left) * (WIDTH / rect.width);
     const canvasY = (clientY - rect.top) * (HEIGHT / rect.height);
 
