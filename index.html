@@ -398,20 +398,29 @@ function update() {
             createExplosion(ballX, ballY, getBallColor(activePowerUp));
             playTone(440, "triangle", 0.12); 
         }
-
-        if (outOfBounds) {
+	if (outOfBounds) {
             consecutiveHits = 0; currentMultiplier = 1; isPerfectHit = false; displayPerfectTime = 0;
             createExplosion(ballX, ballY, "#ff0080");
             triggerShake(20, 12); 
-            lives--; 
+            
+            // MODIFICA: In Extreme mode, le vite non si scalano, si azzerano direttamente
+            if (gameMode === "EXTREME") {
+                lives = 0; 
+            } else {
+                lives--; 
+            }
             
             if (lives <= 0) {
-                playTone(150, "sawtooth", 0.4); gameState = "GAMEOVER";
+                playTone(150, "sawtooth", 0.4); 
+                gameState = "GAMEOVER";
             } else {
-                playTone(300, "sine", 0.25); trailPoints = [];
-                orbitSpeed = baseOrbitSpeed + (score * 0.001); gameState = "ORBITING"; 
+                playTone(300, "sine", 0.25); 
+                trailPoints = [];
+                orbitSpeed = baseOrbitSpeed + (score * 0.001); 
+                gameState = "ORBITING"; 
             }
         }
+       
     }
 
     for (let i = particles.length - 1; i >= 0; i--) {
@@ -544,9 +553,13 @@ function draw() {
         let multiText = (gameMode === "CLASSIC" && currentMultiplier > 1) ? ` (X${currentMultiplier})` : "";
         ctx.fillText(`SCORE: ${score}${multiText}`, 30, 50);
         
-        ctx.fillStyle = "#ff0080";
-        let heartStr = "❤️ ".repeat(lives);
-        ctx.font = "20px Arial"; ctx.fillText(heartStr, 30, 85);
+        // MODIFICA: Mostra i cuori solo se siamo in modalità CLASSIC
+        if (gameMode === "CLASSIC") {
+            ctx.fillStyle = "#ff0080";
+            let heartStr = "❤️ ".repeat(lives);
+            ctx.font = "20px Arial"; 
+            ctx.fillText(heartStr, 30, 85);
+        }
 
         if (powerUpTimer > 0 && gameMode === "CLASSIC") {
             ctx.fillStyle = "rgba(255,255,255,0.1)"; ctx.fillRect(30, 105, 150, 8);
