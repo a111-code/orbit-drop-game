@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Orbit Drop</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            margin: 0; 
+            background: #06060e; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            overflow: hidden; 
+            font-family: 'Segoe UI', Arial, sans-serif; 
+            padding: 10px;
+        }
+        canvas { 
+            background: #06060e; 
+            box-shadow: 0 0 30px rgba(0,255,255,0.15); 
+            max-width: 100%; 
+            max-height: 100%; 
+            border-radius: 12px;
+            aspect-ratio: 800 / 600;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+const WIDTH = 800;
+const HEIGHT = 600;
+function setupCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = WIDTH + "px";
+    canvas.style.height = HEIGHT + "px";
+    canvas.width = WIDTH * dpr;
+    canvas.height = HEIGHT * dpr;
+    ctx.scale(dpr, dpr);
+}
+setupCanvas();
+
+const PERFECT_TOLERANCE = 4; 
+
+let gameState = "START_SCREEN"; 
+let gameMode = "CLASSIC"; // "CLASSIC" o "EXTREME"
+
+let score = 0;
+let highScoreClassic = localStorage.getItem("orbit_drop_hs_classic") ? parseInt(localStorage.getItem("orbit_drop_hs_classic")) : 0;
+let highScoreExtreme = localStorage.getItem("orbit_drop_hs_extreme") ? parseInt(localStorage.getItem("orbit_drop_hs_extreme")) : 0;
+let lives = 3; 
+
+let consecutiveHits = 0;     
+let currentMultiplier = 1;   
+let displayComboTime = 0;    
+let isPerfectHit = false;     
+let displayPerfectTime = 0;   
+
+let targetType = "NORMAL";  
+let activePowerUp = "NONE"; 
+let powerUpTimer = 0;      
+let ballBounced = false;    
+
+// --- UI BUTTONS ---
+const btnClassic = { x: WIDTH / 2 - 160, y: HEIGHT / 2 - 35, w: 320, h: 60, radius: 8 };
+const btnExtreme = { x: WIDTH / 2 - 160, y: HEIGHT / 2 + 45, w: 320, h: 60, radius: 8 };
+
+const btnMenu = { x: WIDTH / 2 - 230, y: HEIGHT / 2 + 60, w: 210, h: 50, radius: 8 };   // Left
+const btnReplay = { x: WIDTH / 2 + 20, y: HEIGHT / 2 + 60, w: 210, h: 50, radius: 8 };   // Right
+
+let screenShake = { x: 0, y: 0, duration: 0, intensity: 0 };
+let centerX = WIDTH / 2;
+let centerY = HEIGHT / 2;
+const orbitRadius = 65;
+let ballAngle = 0;
+
+const baseOrbitSpeed = 0.024; 
+let orbitSpeed = baseOrbitSpeed;
+let orbitDirection = 1; 
+
+let ballX = 0, ballY = 0;
+const ballRadius = 9;
+let ballSpeedX = 0, ballSpeedY = 0;
+const ballLaunchSpeed = 8.0; 
+
+let trailPoints = [];
+let particles = [];
+let targetX = 0, targetY = 0;
+let targetRadius = 55; 
+let pulseAngle = 0;
+
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playTone(freq, type, duration) {
+    try {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        let osc = audioCtx.createOscillator();
+        let gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    } catch(e){}
+}
+
+function triggerShake(duration, intensity) {
+    screenShake.duration = duration;
+    screenShake.intensity = intensity;
+}
+
+function createExplosion(x, y, color) {
+    let count = color === "#ffd700" ? 30 : 18;
+    for (let i = 0; i < count; i++) {
+        particles.push({
+            x: x, y: y,
+            vx: (Math.random() - 0.5) * (color === "#ffd700" ? 9 : 6),
+            vy: (Math.random() - 0.5) * (color === "#ffd700" ? 9 : 6),
+            radius: Math.random() * 3 + 2,
+            alpha: 1,
+            color: color
+        });
+    }
+}
+
+function getBallColor(type) {
+    if (type === "SLOW") return "#9370db";
+    if (type === "FLIPPER") return "#00bfff";
+    if (type === "GIGA") return "#ff8c00";
+    if (type === "MAGNET") return "#ff1493";
+    if (type === "AIM") return "#ffffff";
+    return "#00ffff"; 
+}
+
+function spawnTarget() {
+    targetRadius = Math.max(28, 55 - (score * 0.5)); 
+    orbitDirection = score > 6 ? (Math.random() > 0.5 ? 1 : -1) : 1;
+
+    if (gameMode === "CLASSIC") {
+        if (score > 3 && activePowerUp === "NONE" && Math.random() < 0.22) {
+            let rand = Math.random();
+            if (rand < 0.20) targetType = "FLIPPER";
+            else if (rand < 0.40) targetType = "SLOW";
+            else if (rand < 0.60) targetType = "GIGA";
+            else if (rand < 0.80) targetType = "MAGNET";
+            else targetType = "AIM"; 
+        } else {
+            targetType = "NORMAL";
+        }
+    } else {
+        targetType = "NORMAL";
+    }
+
+    while (true) {
+        targetX = Math.floor(Math.random() * (WIDTH - 240)) + 120;
+        targetY = Math.floor(Math.random() * (HEIGHT - 240)) + 120;
+        let distance = Math.hypot(targetX - centerX, targetY - centerY);
+        if (distance > 150 && distance < 280) break;
+    }
+}
+
+function getFibonacciRequirement(multiplierLevel) {
+    if (multiplierLevel <= 1) return 5;
+    let a = 5, b = 8;
+    for (let i = 2; i < multiplierLevel; i++) {
+        let temp = a + b;
+        a = b; b = temp;
+    }
+    return b;
+}
+
+function launchBall() {
+    if (gameState === "ORBITING") {
+        let tangentAngle = ballAngle + (Math.PI / 2) * orbitDirection;
+        ballSpeedX = Math.cos(tangentAngle) * ballLaunchSpeed;
+        ballSpeedY = Math.sin(tangentAngle) * ballLaunchSpeed;
+        ballBounced = false; 
+        gameState = "FLYING"; 
+        playTone(523.25, "sine", 0.15); 
+    }
+}
+
+function startGame(mode) {
+    gameMode = mode;
+    score = 0; lives = 3; consecutiveHits = 0; currentMultiplier = 1;
+    displayPerfectTime = 0; isPerfectHit = false; activePowerUp = "NONE"; powerUpTimer = 0;
+    orbitSpeed = baseOrbitSpeed; centerX = WIDTH / 2; centerY = HEIGHT / 2;
+    spawnTarget(); ballAngle = 0; trailPoints = []; particles = [];
+    gameState = "ORBITING";
+    playTone(587.33, "sine", 0.2);
+}
+
+function isInside(x, y, rect) {
+    return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+}
+
+function handleInput(clientX, clientY) {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    const rect = canvas.getBoundingClientRect();
+    const canvasX = (clientX - rect.left) * (WIDTH / rect.width);
+    const canvasY = (clientY - rect.top) * (HEIGHT / rect.height);
+
+    if (gameState === "START_SCREEN") {
+        if (isInside(canvasX, canvasY, btnClassic)) startGame("CLASSIC");
+        else if (isInside(canvasX, canvasY, btnExtreme)) startGame("EXTREME");
+    } else if (gameState === "GAMEOVER") {
+        if (isInside(canvasX, canvasY, btnReplay)) {
+            startGame(gameMode);
+        } else if (isInside(canvasX, canvasY, btnMenu)) {
+            gameState = "START_SCREEN"; 
+            playTone(440, "sine", 0.1);
+        }
+    } else {
+        launchBall();
+    }
+}
+
+window.addEventListener("mousedown", (e) => { e.preventDefault(); handleInput(e.clientX, e.clientY); });
+window.addEventListener("touchstart", (e) => { 
+    e.preventDefault(); 
+    let touch = e.touches[0];
+    handleInput(touch.clientX, touch.clientY); 
+}, { passive: false });
+
+window.addEventListener("keydown", (e) => { 
+    if (e.code === "Space") {
+        if (gameState === "ORBITING") launchBall();
+    }
+});
+
+function update() {
+    pulseAngle += 0.05; 
+    
+    if (gameState === "START_SCREEN") return;
+
+    if (displayComboTime > 0) displayComboTime--;
+    if (displayPerfectTime > 0) displayPerfectTime--;
+
+    if (powerUpTimer > 0) {
+        powerUpTimer--;
+        if (powerUpTimer <= 0) activePowerUp = "NONE";
+    }
+
+    if (screenShake.duration > 0) {
+        screenShake.x = (Math.random() - 0.5) * screenShake.intensity;
+        screenShake.y = (Math.random() - 0.5) * screenShake.intensity;
+        screenShake.duration--;
+    } else {
+        screenShake.x = 0; screenShake.y = 0;
+    }
+
+    if (gameState === "ORBITING") {
+        let speedMod = activePowerUp === "SLOW" ? 0.45 : 1.0;
+        ballAngle += orbitSpeed * orbitDirection * speedMod;
+        ballX = centerX + Math.cos(ballAngle) * orbitRadius;
+        ballY = centerY + Math.sin(ballAngle) * orbitRadius;
+        if (trailPoints.length > 0) trailPoints.shift();
+    } else if (gameState === "FLYING") {
+        
+        if (activePowerUp === "MAGNET") {
+            let dx = targetX - ballX;
+            let dy = targetY - ballY;
+            let dist = Math.hypot(dx, dy);
+            if (dist < 220) { 
+                let pullForce = 0.28; 
+                ballSpeedX += (dx / dist) * pullForce;
+                ballSpeedY += (dy / dist) * pullForce;
+                
+                let currentSpeed = Math.hypot(ballSpeedX, ballSpeedY);
+                ballSpeedX = (ballSpeedX / currentSpeed) * ballLaunchSpeed;
+                ballSpeedY = (ballSpeedY / currentSpeed) * ballLaunchSpeed;
+            }
+        }
+
+        ballX += ballSpeedX;
+        ballY += ballSpeedY;
+        
+        trailPoints.push({x: ballX, y: ballY});
+        if (trailPoints.length > 12) trailPoints.shift(); 
+        
+        let effectiveRadius = targetRadius * (activePowerUp === "GIGA" ? 1.7 : 1);
+        let distanceToTarget = Math.hypot(ballX - targetX, ballY - targetY);
+        let distanceToCenter = Math.hypot(ballX - centerX, ballY - centerY);
+        
+        if (activePowerUp === "FLIPPER" && ballBounced && distanceToCenter <= orbitRadius + 4) {
+            ballAngle = Math.atan2(ballY - centerY, ballX - centerX);
+            trailPoints = [];
+            ballBounced = false;
+            gameState = "ORBITING";
+            playTone(783.99, "sine", 0.15); 
+            return;
+        }
+
+        if (distanceToTarget <= effectiveRadius) {
+            
+            if (gameMode === "CLASSIC") {
+                let nextPowerUp = targetType;
+                let perpDist = Math.abs(ballSpeedX * (targetY - ballY) - ballSpeedY * (targetX - ballX)) / Math.hypot(ballSpeedX, ballSpeedY);
+
+                if (perpDist <= PERFECT_TOLERANCE) { 
+                    currentMultiplier++; consecutiveHits = 0; isPerfectHit = true; displayPerfectTime = 45;  
+                    triggerShake(12, 6); playTone(1200, "sine", 0.3); 
+                } else {
+                    consecutiveHits++; 
+                    let requiredForNext = getFibonacciRequirement(currentMultiplier);
+                    if (consecutiveHits >= requiredForNext) {
+                        currentMultiplier++; consecutiveHits = 0; displayComboTime = 40; 
+                    }
+                    isPerfectHit = false;
+                    playTone(880 + (currentMultiplier * 40), "triangle", 0.2);
+                }
+                
+                score += currentMultiplier; 
+                if (score > highScoreClassic) { highScoreClassic = score; localStorage.setItem("orbit_drop_hs_classic", highScoreClassic); }
+                
+                let explosionColor = "#00ff80";
+                if (targetType === "FLIPPER") explosionColor = "#00bfff";
+                else if (targetType === "SLOW") explosionColor = "#9370db";
+                else if (targetType === "GIGA") explosionColor = "#ff8c00";
+                else if (targetType === "MAGNET") explosionColor = "#ff1493";
+                else if (targetType === "AIM") explosionColor = "#ffffff";
+                else if (isPerfectHit || displayPerfectTime > 0) explosionColor = "#ffd700";
+
+                createExplosion(targetX, targetY, explosionColor);
+                
+                if (targetType !== "NORMAL") {
+                    activePowerUp = nextPowerUp;
+                    powerUpTimer = 600; 
+                    playTone(932.33, "sine", 0.4);
+                }
+            } else {
+                score += 1;
+                if (score > highScoreExtreme) { highScoreExtreme = score; localStorage.setItem("orbit_drop_hs_extreme", highScoreExtreme); }
+                createExplosion(targetX, targetY, "#00ff80");
+                playTone(880, "triangle", 0.2);
+            }
+
+            centerX = targetX; centerY = targetY;
+            ballAngle = Math.atan2(ballY - centerY, ballX - centerX);
+            trailPoints = [];
+            orbitSpeed = Math.min(0.065, baseOrbitSpeed + (score * 0.0015));
+            spawnTarget();
+            gameState = "ORBITING";
+        }
+        
+        let bounced = false;
+        let outOfBounds = false;
+
+        if (ballX - ballRadius < 0) {
+            if (activePowerUp === "FLIPPER") { ballX = ballRadius; ballSpeedX *= -1; bounced = true; }
+            else { outOfBounds = true; }
+        } else if (ballX + ballRadius > WIDTH) {
+            if (activePowerUp === "FLIPPER") { ballX = WIDTH - ballRadius; ballSpeedX *= -1; bounced = true; }
+            else { outOfBounds = true; }
+        }
+
+        if (!outOfBounds) {
+            if (ballY - ballRadius < 0) {
+                if (activePowerUp === "FLIPPER") { ballY = ballRadius; ballSpeedY *= -1; bounced = true; }
+                else { outOfBounds = true; }
+            } else if (ballY + ballRadius > HEIGHT) {
+                if (activePowerUp === "FLIPPER") { ballY = HEIGHT - ballRadius; ballSpeedY *= -1; bounced = true; }
+                else { outOfBounds = true; }
+            }
+        }
+
+        if (bounced) {
+            ballBounced = true; 
+            triggerShake(8, 5);
+            createExplosion(ballX, ballY, getBallColor(activePowerUp));
+            playTone(440, "triangle", 0.12); 
+        }
+
+        if (outOfBounds) {
+            consecutiveHits = 0; currentMultiplier = 1; isPerfectHit = false; displayPerfectTime = 0;
+            createExplosion(ballX, ballY, "#ff0080");
+            triggerShake(20, 12); 
+            lives--; 
+            
+            if (lives <= 0) {
+                playTone(150, "sawtooth", 0.4); gameState = "GAMEOVER";
+            } else {
+                playTone(300, "sine", 0.25); trailPoints = [];
+                orbitSpeed = baseOrbitSpeed + (score * 0.001); gameState = "ORBITING"; 
+            }
+        }
+    }
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i]; p.x += p.vx; p.y += p.vy; p.alpha -= 0.05; 
+        if (p.alpha <= 0) particles.splice(i, 1);
+    }
+}
+
+function draw() {
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+    ctx.save();
+    ctx.translate(screenShake.x, screenShake.y);
+    
+    // --- START SCREEN ---
+    if (gameState === "START_SCREEN") {
+        ctx.shadowColor = "#00ffff"; ctx.shadowBlur = 30;
+        ctx.fillStyle = "#ffffff"; ctx.font = "bold 65px 'Segoe UI'"; ctx.textAlign = "center";
+        ctx.fillText("ORBIT DROP", WIDTH/2, HEIGHT/2 - 110);
+        
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "20px 'Segoe UI'";
+        ctx.fillText("Select Challenge", WIDTH/2, HEIGHT/2 - 65);
+
+        // Classic Button (Cyan)
+        ctx.save();
+        ctx.shadowColor = "rgba(0, 255, 255, 0.4)"; ctx.shadowBlur = 15;
+        ctx.fillStyle = "#00ffff";
+        ctx.beginPath(); ctx.roundRect(btnClassic.x, btnClassic.y, btnClassic.w, btnClassic.h, btnClassic.radius); ctx.fill();
+        ctx.fillStyle = "#06060e"; ctx.font = "bold 24px 'Segoe UI'"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("CLASSIC", btnClassic.x + btnClassic.w / 2, btnClassic.y + btnClassic.h / 2);
+        ctx.restore();
+
+        // Extreme Button (Green)
+        ctx.save();
+        ctx.shadowColor = "rgba(0, 255, 128, 0.4)"; ctx.shadowBlur = 15;
+        ctx.fillStyle = "#00ff80";
+        ctx.beginPath(); ctx.roundRect(btnExtreme.x, btnExtreme.y, btnExtreme.w, btnExtreme.h, btnExtreme.radius); ctx.fill();
+        ctx.fillStyle = "#06060e"; ctx.font = "bold 24px 'Segoe UI'"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("EXTREME", btnExtreme.x + btnExtreme.w / 2, btnExtreme.y + btnExtreme.h / 2);
+        ctx.restore();
+        
+        ctx.restore();
+        return; 
+    }
+
+    // --- GAMEPLAY RENDER ---
+    let currentBallColor = gameMode === "EXTREME" ? "#00ffff" : getBallColor(activePowerUp);
+
+    if (gameState !== "GAMEOVER" && activePowerUp === "FLIPPER") {
+        ctx.save();
+        ctx.strokeStyle = "#00bfff"; ctx.lineWidth = 6;
+        ctx.shadowColor = "#00bfff"; ctx.shadowBlur = 15;
+        ctx.strokeRect(3, 3, WIDTH - 6, HEIGHT - 6);
+        ctx.restore();
+    }
+
+    if (gameState !== "GAMEOVER") {
+        
+        if (gameState === "ORBITING" && activePowerUp === "AIM" && gameMode === "CLASSIC") {
+            ctx.save();
+            let tangentAngle = ballAngle + (Math.PI / 2) * orbitDirection;
+            let laserLen = 320; 
+            let endX = ballX + Math.cos(tangentAngle) * laserLen;
+            let endY = ballY + Math.sin(tangentAngle) * laserLen;
+            
+            let laserGrad = ctx.createLinearGradient(ballX, ballY, endX, endY);
+            laserGrad.addColorStop(0, "rgba(255, 255, 255, 0.85)");
+            laserGrad.addColorStop(0.15, "rgba(255, 255, 255, 0.45)");
+            laserGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
+            
+            ctx.strokeStyle = laserGrad;
+            ctx.lineWidth = 3.5;
+            ctx.shadowColor = "#ffffff"; ctx.shadowBlur = 12;
+            ctx.beginPath();
+            ctx.moveTo(ballX, ballY);
+            ctx.lineTo(endX, endY);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        ctx.strokeStyle = "rgba(40, 40, 60, 0.4)"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(centerX, centerY, orbitRadius, 0, Math.PI*2); ctx.stroke();
+        
+        ctx.shadowColor = "#ff0080"; ctx.shadowBlur = 15;
+        ctx.fillStyle = "#ff0080";
+        ctx.beginPath(); ctx.arc(centerX, centerY, 12, 0, Math.PI*2); ctx.fill();
+        
+        let effectiveRadius = targetRadius * (activePowerUp === "GIGA" ? 1.7 : 1);
+        let visualTargetRadius = effectiveRadius + Math.sin(pulseAngle) * 3;
+        
+        let targetColor = "#00ff80"; 
+        if (gameMode === "CLASSIC") {
+            if (targetType === "FLIPPER") targetColor = "#00bfff";
+            else if (targetType === "SLOW") targetColor = "#9370db";
+            else if (targetType === "GIGA") targetColor = "#ff8c00";
+            else if (targetType === "MAGNET") targetColor = "#ff1493";
+            else if (targetType === "AIM") targetColor = "#ffffff";
+            else if (displayPerfectTime > 0) targetColor = "#ffd700";
+        }
+        
+        ctx.shadowColor = targetColor; ctx.shadowBlur = 18;
+        ctx.strokeStyle = targetColor; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(targetX, targetY, visualTargetRadius, 0, Math.PI*2); ctx.stroke();
+        ctx.fillStyle = targetColor;
+        ctx.beginPath(); ctx.arc(targetX, targetY, 5, 0, Math.PI*2); ctx.fill();
+        
+        ctx.shadowBlur = 0;
+        trailPoints.forEach((point, i) => {
+            let alphaRadius = ballRadius * (i / trailPoints.length) * 0.8;
+            if (alphaRadius < 1) alphaRadius = 1;
+            ctx.save();
+            ctx.globalAlpha = (i / trailPoints.length) * 0.4;
+            ctx.fillStyle = currentBallColor;
+            ctx.beginPath(); ctx.arc(point.x, point.y, alphaRadius, 0, Math.PI*2); ctx.fill();
+            ctx.restore();
+        });
+        
+        ctx.shadowColor = currentBallColor; ctx.shadowBlur = 15;
+        ctx.fillStyle = currentBallColor;
+        ctx.beginPath(); ctx.arc(ballX, ballY, ballRadius, 0, Math.PI*2); ctx.fill();
+        
+        ctx.shadowBlur = 0;
+        particles.forEach(p => {
+            ctx.fillStyle = p.color; ctx.globalAlpha = p.alpha;
+            ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI*2); ctx.fill();
+        });
+        ctx.globalAlpha = 1.0;
+
+        ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.font = "bold 26px 'Segoe UI'"; ctx.textAlign = "left";
+        let multiText = (gameMode === "CLASSIC" && currentMultiplier > 1) ? ` (X${currentMultiplier})` : "";
+        ctx.fillText(`SCORE: ${score}${multiText}`, 30, 50);
+        
+        ctx.fillStyle = "#ff0080";
+        let heartStr = "❤️ ".repeat(lives);
+        ctx.font = "20px Arial"; ctx.fillText(heartStr, 30, 85);
+
+        if (powerUpTimer > 0 && gameMode === "CLASSIC") {
+            ctx.fillStyle = "rgba(255,255,255,0.1)"; ctx.fillRect(30, 105, 150, 8);
+            ctx.fillStyle = currentBallColor; ctx.fillRect(30, 105, (powerUpTimer / 600) * 150, 8);
+        }
+
+        ctx.textAlign = "center";
+        if (gameMode === "CLASSIC") {
+            if (displayPerfectTime > 0) {
+                ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 15; ctx.fillStyle = "#ffd700";
+                let size = 22 + (displayPerfectTime / 2); ctx.font = `bold ${size}px 'Segoe UI'`;
+                ctx.fillText(`✨ PERFECT RELEASE! X${currentMultiplier} ✨`, WIDTH / 2, 70);
+            } else if (displayComboTime > 0 && currentMultiplier > 1) {
+                ctx.shadowColor = "#00ffff"; ctx.shadowBlur = 10; ctx.fillStyle = "#00ffff";
+                let size = 20 + (displayComboTime / 2); ctx.font = `bold ${size}px 'Segoe UI'`;
+                ctx.fillText(`MULTIPLIER UP X${currentMultiplier}!`, WIDTH / 2, 70);
+            }
+        }
+
+    } else {
+        // --- GAME OVER ---
+        ctx.shadowColor = "#ff0080"; ctx.shadowBlur = 20;
+        ctx.fillStyle = "#ff0080"; ctx.font = "bold 55px 'Segoe UI'"; ctx.textAlign = "center";
+        ctx.fillText("GAME OVER", WIDTH/2, HEIGHT/2 - 100);
+        
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "#ffffff"; ctx.font = "24px 'Segoe UI'";
+        let modeStr = gameMode === "CLASSIC" ? "Classic" : "Extreme";
+        ctx.fillText(`${modeStr} - Final Score: ${score}`, WIDTH/2, HEIGHT/2 - 35);
+        
+        let targetHigh = gameMode === "CLASSIC" ? highScoreClassic : highScoreExtreme;
+        ctx.fillStyle = "#00ffff"; ctx.font = "bold 24px 'Segoe UI'";
+        ctx.fillText(`All-Time Best: ${targetHigh}`, WIDTH/2, HEIGHT/2);
+        
+        // MAIN MENU (Left Button)
+        ctx.save();
+        ctx.shadowColor = "rgba(255, 255, 255, 0.15)"; ctx.shadowBlur = 8;
+        ctx.fillStyle = "#2c2c38";
+        ctx.beginPath(); ctx.roundRect(btnMenu.x, btnMenu.y, btnMenu.w, btnMenu.h, btnMenu.radius); ctx.fill();
+        ctx.fillStyle = "#ffffff"; ctx.font = "bold 18px 'Segoe UI'"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("MAIN MENU", btnMenu.x + btnMenu.w / 2, btnMenu.y + btnMenu.h / 2);
+        ctx.restore();
+
+        // PLAY AGAIN (Right Button)
+        ctx.save();
+        ctx.shadowColor = "rgba(0, 255, 255, 0.4)"; ctx.shadowBlur = 12;
+        ctx.fillStyle = "#00ffff";
+        ctx.beginPath(); ctx.roundRect(btnReplay.x, btnReplay.y, btnReplay.w, btnReplay.h, btnReplay.radius); ctx.fill();
+        ctx.fillStyle = "#06060e"; ctx.font = "bold 18px 'Segoe UI'"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("PLAY AGAIN", btnReplay.x + btnReplay.w / 2, btnReplay.y + btnReplay.h / 2);
+        ctx.restore();
+    }
+    ctx.restore();
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
